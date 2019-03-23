@@ -9,6 +9,7 @@
 #include "fprint_ml.h"
 
 static void scan_cb(struct fp_dev *, int, struct fp_img *, void *);
+static void cwin_cb_scan(GtkWidget *, gpointer);
 
 static GtkWidget *cwin_non_img_label;
 static GtkWidget *cwin_scanned_img;
@@ -21,18 +22,23 @@ static GtkWidget *cwin_radio_normal;
 static GtkWidget *cwin_radio_bin;
 static GtkWidget *cwin_show_minutiae;
 static GtkWidget *cwin_img_save_btn;
+static GtkWidget *cwin_img_save_path_btn;
 
 static struct fp_img *img_normal = NULL;
 static struct fp_img *img_bin = NULL;
 static struct fp_print_data *scan_data = NULL;
 
 static gint timeout_clt_tag;
+static gchar *img_save_path;
 
 gint timeout_ctl_callback(gpointer data) {
     int r;
-    g_print("Hello\n");
+
     r = fp_async_capture_start(fpdev, 0, scan_cb, NULL);
     if (r < 0) {
+        g_print("WARNING: timeout_ctl_callback() -> fp_async_capture_stop() "
+                "returned %d\n",
+                r);
         return FALSE;
     }
     return FALSE;
@@ -62,7 +68,9 @@ static void cwin_clear(void) {
     // gtk_widget_set_sensitive(cwin_clt_button, FALSE);
 }
 
-static void cwin_refresh(void) { g_print("cwin_refresh\n"); }
+static void cwin_refresh(void) {
+    g_print("INFO: cwin_refresh() was executed\n");
+}
 
 static void cwin_activate_dev(void) {
     g_assert(fpdev);
@@ -197,15 +205,19 @@ static void cwin_cb_imgfmt_toggled(GtkWidget *widget, gpointer data) {
 }
 
 static void scan_stopped_cb(struct fp_dev *dev, void *user_data) {
-    gtk_widget_destroy(GTK_WIDGET(user_data));
+    if (user_data != NULL) {
+        g_print(
+            "INFO: scan_stopped_cb() -> gtk_widget_destroy() was executed\n");
+        gtk_widget_destroy(GTK_WIDGET(user_data));
+    }
 }
 
 static void scan_cb(struct fp_dev *dev, int result, struct fp_img *img,
                     void *user_data) {
-    GtkWidget *dialog;
+    // GtkWidget *dialog;
     int r;
 
-    destroy_scan_finger_dialog(GTK_WIDGET(user_data));
+    // destroy_scan_finger_dialog(GTK_WIDGET(user_data));
     cwin_clt_status_scan_result(result);
 
     fp_img_free(img_normal);
@@ -217,14 +229,50 @@ static void scan_cb(struct fp_dev *dev, int result, struct fp_img *img,
         img_normal = img;
         img_bin = fp_img_binarize(img);
         cwin_img_draw();
+
+        GDateTime *now;
+        now = g_date_time_new_now_local();
+        const gchar *format = "%Y-%m-%d_%H-%M-%S";
+        gchar *timestamp;
+        timestamp = g_date_time_format(now, format);
+        g_date_time_unref(now);
+
+        gchar *img_filename;
+        // filename = g_strdup_printf("%s.pgm", timestamp);
+        img_filename = g_strconcat(timestamp, ".pgm", NULL);
+        g_print("%s\n", img_filename);
+        r = fp_img_save_to_file(img, "fp.pgm");
+        g_free(img_filename);
+
+        if (r < 0) {
+            g_print("WARNING: scan_cb() -> fp_img_save_to_file() returned %d\n",
+                    r);
+        }
     }
 
-    dialog = run_please_wait_dialog("Scan ending...");
-    r = fp_async_capture_stop(dev, scan_stopped_cb, dialog);
-    if (r < 0)
-        gtk_widget_destroy(dialog);
+    // dialog = run_please_wait_dialog("Scan ending...");
+    // r = fp_async_capture_stop(dev, scan_stopped_cb, dialog);
+    r = fp_async_capture_stop(dev, scan_stopped_cb, NULL);
+    if (r < 0) {
+        g_print("WARNING: scan_cb() -> fp_async_capture_stop() returned %d\n",
+                r);
+        // gtk_widget_destroy(dialog);
+        return;
+    }
 
-    timeout_clt_tag = g_timeout_add(1000, timeout_ctl_callback, NULL);
+    GtkAdjustment *cwin_clt_scale_adj =
+        gtk_range_get_adjustment(GTK_RANGE(cwin_clt_scale));
+    gint cwin_clt_scale_adj_value =
+        (gint)gtk_adjustment_get_value(cwin_clt_scale_adj);
+
+    gtk_adjustment_set_value(
+        cwin_clt_scale_adj,
+        ((--cwin_clt_scale_adj_value) >= 0) ? cwin_clt_scale_adj_value : 0);
+    if (cwin_clt_scale_adj_value > 0) {
+        timeout_clt_tag = g_timeout_add(1000, timeout_ctl_callback, NULL);
+    } else {
+        cwin_cb_scan(cwin_clt_button, NULL);
+    }
 }
 
 static void scan_finger_response(GtkWidget *dialog, gint arg,
@@ -234,18 +282,24 @@ static void scan_finger_response(GtkWidget *dialog, gint arg,
     destroy_scan_finger_dialog(dialog);
     dialog = run_please_wait_dialog("Scan ending...");
     r = fp_async_capture_stop(fpdev, scan_stopped_cb, dialog);
-    if (r < 0)
+    if (r < 0) {
+        g_print("WARNING: scan_finger_response() -> fp_async_capture_stop() "
+                "returned %d\n",
+                r);
         gtk_widget_destroy(dialog);
+    }
 }
 
 static void cwin_cb_scan(GtkWidget *widget, gpointer user_data) {
     GtkWidget *dialog;
     int r;
+    GtkAdjustment *cwin_clt_scale_adj;
+
     gchar *label = (gchar *)gtk_button_get_label(GTK_BUTTON(widget));
 
     if (g_strcmp0(label, "Start") == 0) {
         gtk_button_set_label(GTK_BUTTON(widget), "Stop");
-        gtk_widget_set_sensitive(cwin_clt_scale, FALSE);
+        // gtk_widget_set_sensitive(cwin_clt_scale, FALSE);
         gtk_widget_set_sensitive(cwin_img_save_btn, FALSE);
 
         // dialog = create_scan_finger_dialog();
@@ -268,17 +322,42 @@ static void cwin_cb_scan(GtkWidget *widget, gpointer user_data) {
         // G_CALLBACK(scan_finger_response),
         //                  NULL);
         // run_scan_finger_dialog(dialog);
-        timeout_clt_tag = g_timeout_add(1000, timeout_ctl_callback, NULL);
+
+        cwin_clt_scale_adj =
+            gtk_range_get_adjustment(GTK_RANGE(cwin_clt_scale));
+        gint cwin_clt_scale_adj_value =
+            (gint)gtk_adjustment_get_value(cwin_clt_scale_adj);
+        if (cwin_clt_scale_adj_value > 0) {
+            // gtk_adjustment_set_value(cwin_clt_scale_adj,
+            //                          (--cwin_clt_scale_adj_value));
+            timeout_clt_tag = g_timeout_add(1000, timeout_ctl_callback, NULL);
+        } else {
+            cwin_cb_scan(cwin_clt_button, NULL);
+        }
     } else {
         gtk_button_set_label(GTK_BUTTON(widget), "Start");
-        gtk_widget_set_sensitive(cwin_clt_scale, TRUE);
+        // gtk_widget_set_sensitive(cwin_clt_scale, TRUE);
         gtk_widget_set_sensitive(cwin_img_save_btn, TRUE);
 
-        g_source_remove(timeout_clt_tag);
-        dialog = run_please_wait_dialog("Scan ending...");
-        r = fp_async_capture_stop(fpdev, scan_stopped_cb, dialog);
-        if (r < 0)
-            gtk_widget_destroy(dialog);
+        cwin_clt_scale_adj =
+            gtk_range_get_adjustment(GTK_RANGE(cwin_clt_scale));
+        gint cwin_clt_scale_adj_value =
+            (gint)gtk_adjustment_get_value(cwin_clt_scale_adj);
+        if (cwin_clt_scale_adj_value > 0) {
+            // gtk_adjustment_set_value(cwin_clt_scale_adj,
+            //                          (--cwin_clt_scale_adj_value));
+            g_source_remove(timeout_clt_tag);
+        }
+
+        // dialog = run_please_wait_dialog("Scan ending...");
+        // r = fp_async_capture_stop(fpdev, scan_stopped_cb, dialog);
+        r = fp_async_capture_stop(fpdev, scan_stopped_cb, NULL);
+        if (r < 0) {
+            g_print("WARNING: cwin_cb_scan() -> "
+                    "fp_async_capture_stop() returned %d\n",
+                    r);
+            // gtk_widget_destroy(dialog);
+        }
     }
 }
 
@@ -360,14 +439,8 @@ static GtkWidget *cwin_create(void) {
     label = gtk_label_new("Enter number of samples:");
     gtk_box_pack_start(GTK_BOX(clt_vbox), label, FALSE, FALSE, 0);
 
-    cwin_clt_scale = gtk_hscale_new_with_range(0, 500, 1);
+    cwin_clt_scale = gtk_hscale_new_with_range(0, 50, 1);
     gtk_box_pack_start(GTK_BOX(clt_vbox), cwin_clt_scale, FALSE, FALSE, 0);
-
-    /* Collection button */
-    cwin_clt_button = gtk_button_new_with_label("Start");
-    g_signal_connect(G_OBJECT(cwin_clt_button), "clicked",
-                     G_CALLBACK(cwin_cb_scan), NULL);
-    gtk_box_pack_start(GTK_BOX(clt_vbox), cwin_clt_button, FALSE, FALSE, 0);
 
     /* Collection status */
     cwin_clt_status = gtk_label_new(NULL);
@@ -376,6 +449,19 @@ static GtkWidget *cwin_create(void) {
     /* Minutiae count */
     cwin_minutiae_cnt = gtk_label_new(NULL);
     gtk_box_pack_start(GTK_BOX(clt_vbox), cwin_minutiae_cnt, FALSE, FALSE, 0);
+
+    /* Collection button */
+    cwin_clt_button = gtk_button_new_with_label("Start");
+    g_signal_connect(G_OBJECT(cwin_clt_button), "clicked",
+                     G_CALLBACK(cwin_cb_scan), NULL);
+    gtk_box_pack_end(GTK_BOX(clt_vbox), cwin_clt_button, FALSE, FALSE, 0);
+
+    /* Save path */
+    cwin_img_save_path_btn = gtk_button_new_from_stock(GTK_STOCK_OPEN);
+    g_signal_connect(G_OBJECT(cwin_img_save_path_btn), "clicked",
+                     G_CALLBACK(cwin_cb_img_save), NULL);
+    gtk_box_pack_end(GTK_BOX(clt_vbox), cwin_img_save_path_btn, FALSE, FALSE,
+                     0);
 
     /* Image controls frame */
     cwin_ctrl_frame = gtk_frame_new("Image control");
