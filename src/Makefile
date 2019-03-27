@@ -7,7 +7,7 @@ GTK_CFLAGS = -lgtk-x11-2.0 -lgdk-x11-2.0 -lpangocairo-1.0 -latk-1.0 -lcairo -lgd
 SVM_LIBS = -lsvm
 SVM_CFLAGS = -I/usr/include/libsvm
 
-SOURCES = main.c enroll.c img.c verify.c identify.c collect.c debug.c fprint_ml.h
+SOURCES = main.c enroll.c img.c verify.c identify.c collect.c debug.c fprint_ml.h svm.c svm.h
 CFLAGS = -std=gnu99 -fgnu89-inline -Wall -Wundef -Wunused -Wstrict-prototypes -Werror-implicit-function-declaration -Wno-pointer-sign -Wshadow
 BIN = fprint_ml
 

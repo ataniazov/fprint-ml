@@ -7,6 +7,7 @@
 #include <libfprint/fprint.h>
 
 #include "fprint_ml.h"
+#include "svm.h"
 
 static void scan_cb(struct fp_dev *, int, struct fp_img *, void *);
 static void cwin_cb_scan(GtkWidget *, gpointer);
@@ -134,30 +135,34 @@ static void cwin_clt_status_scan_result(int code) {
 static void plot_minutiae(unsigned char *rgbdata, int width, int height,
                           struct fp_minutia **minlist, int nr_minutiae) {
     int i;
-#define write_pixel(num)                                                       \
+#define write_pixel(num, param)                                                \
     do {                                                                       \
-        rgbdata[((num)*3)] = 0xff;                                             \
+        rgbdata[((num)*3)] =                                                   \
+            ((param)&0x01) * 0xff; /*ridge-ending (termination)*/              \
         rgbdata[((num)*3) + 1] = 0;                                            \
-        rgbdata[((num)*3) + 2] = 0;                                            \
+        rgbdata[((num)*3) + 2] = (~(param)&0x01) * 0xff; /*bifurcation*/       \
     } while (0)
 
     for (i = 0; i < nr_minutiae; i++) {
         struct fp_minutia *min = minlist[i];
         size_t pixel_offset = (min->y * width) + min->x;
-        write_pixel(pixel_offset - 2);
-        write_pixel(pixel_offset - 1);
-        write_pixel(pixel_offset);
-        write_pixel(pixel_offset + 1);
-        write_pixel(pixel_offset + 2);
+        int param = min->type;
+        // fprint_print_data(min);
 
-        write_pixel(pixel_offset - (width * 2));
-        write_pixel(pixel_offset - (width * 1) - 1);
-        write_pixel(pixel_offset - (width * 1));
-        write_pixel(pixel_offset - (width * 1) + 1);
-        write_pixel(pixel_offset + (width * 1) - 1);
-        write_pixel(pixel_offset + (width * 1));
-        write_pixel(pixel_offset + (width * 1) + 1);
-        write_pixel(pixel_offset + (width * 2));
+        write_pixel(pixel_offset - 2, param);
+        write_pixel(pixel_offset - 1, param);
+        write_pixel(pixel_offset, param);
+        write_pixel(pixel_offset + 1, param);
+        write_pixel(pixel_offset + 2, param);
+
+        write_pixel(pixel_offset - (width * 2), param);
+        write_pixel(pixel_offset - (width * 1) - 1, param);
+        write_pixel(pixel_offset - (width * 1), param);
+        write_pixel(pixel_offset - (width * 1) + 1, param);
+        write_pixel(pixel_offset + (width * 1) - 1, param);
+        write_pixel(pixel_offset + (width * 1), param);
+        write_pixel(pixel_offset + (width * 1) + 1, param);
+        write_pixel(pixel_offset + (width * 2), param);
     }
 }
 
@@ -228,6 +233,7 @@ static void scan_cb(struct fp_dev *dev, int result, struct fp_img *img,
     if (img) {
         img_normal = img;
         img_bin = fp_img_binarize(img);
+
         cwin_img_draw();
 
         GDateTime *now;
@@ -239,9 +245,12 @@ static void scan_cb(struct fp_dev *dev, int result, struct fp_img *img,
 
         gchar *img_filename;
         // filename = g_strdup_printf("%s.pgm", timestamp);
-        img_filename = g_strconcat(timestamp, ".pgm", NULL);
+        img_filename =
+            g_strconcat(img_save_path, "fprint-ml/", timestamp, ".pgm", NULL);
         g_print("%s\n", img_filename);
-        r = fp_img_save_to_file(img, "fp.pgm");
+
+        r = fp_img_save_to_file(img, img_filename);
+        fprint_csv_format_write(img, img_save_path);
         g_free(img_filename);
 
         if (r < 0) {
@@ -361,6 +370,33 @@ static void cwin_cb_scan(GtkWidget *widget, gpointer user_data) {
     }
 }
 
+static void cwin_cb_img_save_path(GtkWidget *widget, gpointer user_data) {
+    GtkWidget *dialog;
+    dialog = gtk_file_chooser_dialog_new(
+        "Select Save Folder", GTK_WINDOW(mwin_window),
+        GTK_FILE_CHOOSER_ACTION_SELECT_FOLDER, GTK_STOCK_CANCEL,
+        GTK_RESPONSE_CANCEL, GTK_STOCK_OPEN, GTK_RESPONSE_OK, NULL);
+
+    if (!gtk_file_chooser_set_current_folder(GTK_FILE_CHOOSER(dialog),
+                                             img_save_path)) {
+        g_print(
+            "WARNING: cwin_cb_img_save_path() -> CAN NOT set_current_folder()");
+    }
+
+    if (gtk_dialog_run(GTK_DIALOG(dialog)) != GTK_RESPONSE_OK) {
+        gtk_widget_destroy(dialog);
+        return;
+    }
+
+    g_free(img_save_path);
+
+    img_save_path = g_strconcat(
+        gtk_file_chooser_get_current_folder(GTK_FILE_CHOOSER(dialog)), "/",
+        NULL);
+    g_print("%s\n", img_save_path);
+    gtk_widget_destroy(dialog);
+}
+
 static void cwin_cb_img_save(GtkWidget *widget, gpointer user_data) {
     GdkPixbuf *pixbuf = gtk_image_get_pixbuf(GTK_IMAGE(cwin_scanned_img));
     GtkWidget *dialog;
@@ -403,6 +439,8 @@ static GtkWidget *cwin_create(void) {
     GtkWidget *label, *clt_vbox, *clt_frame, *scan_frame, *img_vbox;
     GtkWidget *cwin_ctrl_vbox;
     GtkWidget *cwin_main_hbox;
+
+    img_save_path = g_strconcat(g_get_home_dir(), "/", NULL);
 
     cwin_main_hbox = gtk_hbox_new(FALSE, 1);
 
@@ -450,18 +488,18 @@ static GtkWidget *cwin_create(void) {
     cwin_minutiae_cnt = gtk_label_new(NULL);
     gtk_box_pack_start(GTK_BOX(clt_vbox), cwin_minutiae_cnt, FALSE, FALSE, 0);
 
+    /* Save path */
+    cwin_img_save_path_btn = gtk_button_new_from_stock(GTK_STOCK_OPEN);
+    g_signal_connect(G_OBJECT(cwin_img_save_path_btn), "clicked",
+                     G_CALLBACK(cwin_cb_img_save_path), NULL);
+    gtk_box_pack_end(GTK_BOX(clt_vbox), cwin_img_save_path_btn, FALSE, FALSE,
+                     0);
+
     /* Collection button */
     cwin_clt_button = gtk_button_new_with_label("Start");
     g_signal_connect(G_OBJECT(cwin_clt_button), "clicked",
                      G_CALLBACK(cwin_cb_scan), NULL);
     gtk_box_pack_end(GTK_BOX(clt_vbox), cwin_clt_button, FALSE, FALSE, 0);
-
-    /* Save path */
-    cwin_img_save_path_btn = gtk_button_new_from_stock(GTK_STOCK_OPEN);
-    g_signal_connect(G_OBJECT(cwin_img_save_path_btn), "clicked",
-                     G_CALLBACK(cwin_cb_img_save), NULL);
-    gtk_box_pack_end(GTK_BOX(clt_vbox), cwin_img_save_path_btn, FALSE, FALSE,
-                     0);
 
     /* Image controls frame */
     cwin_ctrl_frame = gtk_frame_new("Image control");
