@@ -66,50 +66,8 @@ gint minutia_csv_data(char **data, int class, int x, int y, int ex, int ey,
                       int direction, int type, int appearing) {
     // *data = (char *)g_strdup_printf("1:%d 2:%d 3:%d 4:%d 5:%d 6:%d 7:%d\n",
     // x, y, ex, ey, direction, type, appearing);
-    *data = (char *)g_strdup_printf("%d,%d,%d,%d,%d\n", class, ex, ey,
-                                    direction, type);
-    return 0;
-}
-
-int fprint_sparse_format_write(struct fp_img *img, gchar *path) {
-    struct fp_minutia **minlist;
-    int nr_minutiae;
-    int i;
-
-    FILE *outfile;
-
-    if (!img) {
-        g_print("WARNING: fprint_sparse_format_write() -> img is NULL\n");
-        return 1;
-    }
-
-    outfile =
-        fopen((char *)g_strconcat(path, "fprint-ml/minutia_svm", NULL), "a+");
-    if (outfile == NULL) {
-        g_print("WARNING: fprint_sparse_format_write() -> fopen() can't write "
-                "file\n");
-        return 1;
-    }
-
-    minlist = fp_img_get_minutiae(img, &nr_minutiae);
-
-    for (i = 0; i < nr_minutiae; i++) {
-        struct fp_minutia *min = minlist[i];
-        char *data;
-        int class = 1;
-        minutia_csv_data(&data, class, min->x, min->y, min->ex, min->ey,
-                         min->direction, min->type, min->appearing);
-
-        if (data == NULL) {
-            g_print("WARNING: fp_img_get_minutiae() -> minutia_svm_data() "
-                    "returned data is NULL\n");
-            return 1;
-        }
-
-        fputs(data, outfile);
-    }
-    fclose(outfile);
-
+    *data = (char *)g_strdup_printf("%d,%d,%d,%d,%d\n", class, x, y, direction,
+                                    type);
     return 0;
 }
 
@@ -152,7 +110,58 @@ int fprint_csv_format_write(struct fp_img *img, gchar *path) {
     }
     fclose(outfile);
 
-    csv_to_sparse((char *)g_strconcat(path, "fprint-ml/minutia_svm", NULL));
+    // csv_to_sparse((char *)g_strconcat(path, "fprint-ml/minutia_svm", NULL));
+
+    return 0;
+}
+
+gint minutia_sparse_data(char **data, int class, int x, int y, int ex, int ey,
+                         int direction, int type, int appearing) {
+    // *data = (char *)g_strdup_printf("1:%d 2:%d 3:%d 4:%d 5:%d 6:%d 7:%d\n",
+    // x, y, ex, ey, direction, type, appearing);
+    *data = (char *)g_strdup_printf("%d 1:%d 2:%d 3:%d 4:%d\n", class, x, y,
+                                    direction, type);
+    return 0;
+}
+
+int fprint_sparse_format_write(struct fp_img *img, gchar *path) {
+    struct fp_minutia **minlist;
+    int nr_minutiae;
+    int i;
+
+    FILE *outfile;
+
+    if (!img) {
+        g_print("WARNING: fprint_sparse_format_write() -> img is NULL\n");
+        return 1;
+    }
+
+    outfile =
+        fopen((char *)g_strconcat(path, "fprint-ml/minutia_svm", NULL), "a+");
+    if (outfile == NULL) {
+        g_print("WARNING: fprint_sparse_format_write() -> fopen() can't write "
+                "file\n");
+        return 1;
+    }
+
+    minlist = fp_img_get_minutiae(img, &nr_minutiae);
+
+    for (i = 0; i < nr_minutiae; i++) {
+        struct fp_minutia *min = minlist[i];
+        char *data;
+        int class = 1;
+        minutia_sparse_data(&data, class, min->x, min->y, min->ex, min->ey,
+                            min->direction, min->type, min->appearing);
+
+        if (data == NULL) {
+            g_print("WARNING: fp_img_get_minutiae() -> minutia_svm_data() "
+                    "returned data is NULL\n");
+            return 1;
+        }
+
+        fputs(data, outfile);
+    }
+    fclose(outfile);
 
     return 0;
 }

@@ -250,7 +250,7 @@ static void scan_cb(struct fp_dev *dev, int result, struct fp_img *img,
         g_print("%s\n", img_filename);
 
         r = fp_img_save_to_file(img, img_filename);
-        fprint_csv_format_write(img, img_save_path);
+        fprint_sparse_format_write(img, img_save_path);
         g_free(img_filename);
 
         if (r < 0) {
